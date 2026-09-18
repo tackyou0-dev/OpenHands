@@ -2,6 +2,7 @@ import { useCallback } from "react";
 import {
   clearTextContent,
   clearFileInput,
+  focusContentEditableAtEnd,
 } from "#/components/features/chat/utils/chat-input.utils";
 import { useConversationStore } from "#/stores/conversation-store";
 
@@ -37,6 +38,9 @@ export const useChatSubmission = (
 
     // Reset manual resize state for next message
     resetManualResize?.();
+
+    // Keep the caret in the input so the user can immediately type a follow-up.
+    focusContentEditableAtEnd(chatInputRef.current);
   }, [chatInputRef, fileInputRef, smartResize, onSubmit, resetManualResize]);
 
   // Handle stop button click
