@@ -4,6 +4,14 @@ import { describe, it, expect, vi } from "vitest";
 import util from "util";
 import { ChatMessage } from "#/components/features/chat/chat-message";
 
+const toastMocks = vi.hoisted(() => ({
+  displayErrorToast: vi.fn(),
+}));
+
+vi.mock("#/utils/custom-toast-handlers", () => ({
+  displayErrorToast: toastMocks.displayErrorToast,
+}));
+
 describe("ChatMessage", () => {
   it.each(["user", "agent"] as const)(
     "shows the recorded timestamp when a %s message is hovered",
@@ -166,6 +174,25 @@ describe("ChatMessage", () => {
 
     await waitFor(() =>
       expect(navigator.clipboard.readText()).resolves.toBe("Hello, World!"),
+    );
+  });
+
+  it("shows an error toast when copying fails", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn().mockRejectedValue(new Error("denied"));
+    vi.spyOn(navigator.clipboard, "writeText").mockImplementation(writeText);
+    toastMocks.displayErrorToast.mockClear();
+
+    render(<ChatMessage type="user" message="Hello, World!" />);
+
+    await user.click(screen.getByTestId("copy-to-clipboard"));
+
+    expect(writeText).toHaveBeenCalledWith("Hello, World!");
+    expect(toastMocks.displayErrorToast).toHaveBeenCalledWith(
+      "CHAT_INTERFACE$CHAT_MESSAGE_COPY_FAILED",
+    );
+    expect(screen.getByTestId("copy-to-clipboard")).toHaveAccessibleName(
+      "BUTTON$COPY",
     );
   });
 

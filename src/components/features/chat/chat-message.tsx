@@ -9,6 +9,7 @@ import { TextShimmer } from "#/components/shared/text-shimmer";
 import { formatEventTimestamp } from "#/utils/format-event-timestamp";
 import { MarkdownRenderer } from "../markdown/markdown-renderer";
 import { PendingStopIcon } from "./pending-stop-icon";
+import { displayErrorToast } from "#/utils/custom-toast-handlers";
 import {
   UserMessageBody,
   chatBubbleMarkdownComponents,
@@ -60,8 +61,12 @@ export function ChatMessage({
   }, [message]);
 
   const handleCopyToClipboard = async () => {
-    await navigator.clipboard.writeText(message);
-    setIsCopy(true);
+    try {
+      await navigator.clipboard.writeText(message);
+      setIsCopy(true);
+    } catch {
+      displayErrorToast(t(I18nKey.CHAT_INTERFACE$CHAT_MESSAGE_COPY_FAILED));
+    }
   };
 
   React.useEffect(() => {
