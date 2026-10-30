@@ -13,7 +13,7 @@ import prefixer from "postcss-prefix-selector";
 import {
   AGENT_SERVER_UI_SCOPE_SELECTOR,
   transformAgentServerUISelector,
-} from "./src/styles/agent-server-ui-style-scope";
+} from "./src/styles/agent-server-ui-style-scope.ts";
 
 const LIB_ENTRY = fileURLToPath(new URL("./src/index.ts", import.meta.url));
 const LIB_EXTERNALS = [

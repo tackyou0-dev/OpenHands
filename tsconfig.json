@@ -23,6 +23,9 @@
     "ignoreDeprecations": "6.0",
     "module": "esnext",
     "moduleResolution": "bundler",
+    // vite.config.ts imports the style-scope helper with its file extension so
+    // the native config loader keeps working (it requires explicit extensions).
+    "allowImportingTsExtensions": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
     "jsx": "react-jsx",
