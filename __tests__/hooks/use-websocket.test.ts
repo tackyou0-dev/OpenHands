@@ -1,46 +1,108 @@
 /**
- * TODO: Fix flaky WebSocket tests (https://github.com/OpenHands/OpenHands/issues/11944)
+ * WebSocket hook tests.
  *
- * Several tests in this file are skipped because they fail intermittently in CI
- * but pass locally. The SUSPECTED root cause is that `wsLink.broadcast()` sends messages
- * to ALL connected clients across all tests, causing cross-test contamination
- * when tests run in parallel with Vitest v4.
+ * Every test drives the hook through a deterministic `WebSocket` stub rather
+ * than a shared MSW mock server: `wsLink.broadcast()` reaches *every*
+ * connected client, so a message sent from one test leaked into the others and
+ * made the suite fail intermittently in CI (OpenHands/OpenHands#11944).
  */
 import { act, renderHook, waitFor } from "@testing-library/react";
-import {
-  describe,
-  it,
-  expect,
-  beforeAll,
-  afterAll,
-  afterEach,
-  vi,
-} from "vitest";
-import { ws } from "msw";
-import { setupServer } from "msw/node";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { useWebSocket } from "#/hooks/use-websocket";
 
+/**
+ * Deterministic stand-in for the browser `WebSocket`. Tests configure the
+ * static knobs below to describe how a connection should behave, then drive
+ * events explicitly (or let the queued microtask do it).
+ */
+class MockWebSocket {
+  static readonly CONNECTING = 0;
+  static readonly OPEN = 1;
+  static readonly CLOSING = 2;
+  static readonly CLOSED = 3;
+
+  /** Frames the "server" pushes right after the handshake completes. */
+  static welcomeMessages: string[] = [];
+  /** Close code used to reject the connection instead of opening it. */
+  static failWithCode: number | null = null;
+  static instances: MockWebSocket[] = [];
+
+  static reset() {
+    MockWebSocket.welcomeMessages = [];
+    MockWebSocket.failWithCode = null;
+    MockWebSocket.instances = [];
+  }
+
+  readonly url: string;
+  readyState: number = MockWebSocket.CONNECTING;
+  onopen: ((event: Event) => void) | null = null;
+  onmessage: ((event: MessageEvent) => void) | null = null;
+  onclose: ((event: CloseEvent) => void) | null = null;
+  onerror: ((event: Event) => void) | null = null;
+  readonly sent: unknown[] = [];
+
+  constructor(url: string) {
+    this.url = url;
+    MockWebSocket.instances.push(this);
+
+    const failWithCode = MockWebSocket.failWithCode;
+    queueMicrotask(() => {
+      if (failWithCode !== null) {
+        this.emitFailure(failWithCode);
+      } else {
+        this.emitOpen();
+      }
+    });
+  }
+
+  send(data: unknown) {
+    this.sent.push(data);
+  }
+
+  close() {
+    if (this.readyState === MockWebSocket.CLOSED) return;
+    this.readyState = MockWebSocket.CLOSED;
+    this.onclose?.(
+      new CloseEvent("close", {
+        code: 1000,
+        reason: "Normal closure",
+        wasClean: true,
+      }),
+    );
+  }
+
+  emitOpen() {
+    this.readyState = MockWebSocket.OPEN;
+    this.onopen?.(new Event("open"));
+    MockWebSocket.welcomeMessages.forEach((data) => this.emitMessage(data));
+  }
+
+  emitMessage(data: string) {
+    this.onmessage?.(new MessageEvent("message", { data }));
+  }
+
+  emitFailure(code: number) {
+    this.readyState = MockWebSocket.CLOSED;
+    this.onerror?.(new Event("error"));
+    this.onclose?.(
+      new CloseEvent("close", {
+        code,
+        reason: "Connection failed",
+        wasClean: false,
+      }),
+    );
+  }
+}
+
 describe("useWebSocket", () => {
-  // MSW WebSocket mock setup
-  const wsLink = ws.link("ws://acme.com/ws");
+  beforeEach(() => {
+    MockWebSocket.reset();
+    vi.stubGlobal("WebSocket", MockWebSocket);
+  });
 
-  const mswServer = setupServer(
-    wsLink.addEventListener("connection", ({ client, server }) => {
-      // Establish the connection
-      server.connect();
-
-      // Send a welcome message to confirm connection
-      client.send("Welcome to the WebSocket!");
-    }),
-  );
-
-  beforeAll(() =>
-    mswServer.listen({
-      onUnhandledRequest: "warn",
-    }),
-  );
-  afterEach(() => mswServer.resetHandlers());
-  afterAll(() => mswServer.close());
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
 
   const waitForConnection = async (result: {
     current: {
@@ -56,8 +118,9 @@ describe("useWebSocket", () => {
   };
 
   it("should establish a WebSocket connection", async () => {
+    MockWebSocket.welcomeMessages = ["Welcome to the WebSocket!"];
     const messages: string[] = [];
-    const { result } = renderHook(() =>
+    const { result, unmount } = renderHook(() =>
       useWebSocket("ws://acme.com/ws", {
         onMessage: (event) => messages.push(event.data),
       }),
@@ -76,6 +139,10 @@ describe("useWebSocket", () => {
 
     // Confirm that the WebSocket connection is established when the hook is used
     expect(result.current.socket).toBeTruthy();
+    expect(MockWebSocket.instances).toHaveLength(1);
+    expect(MockWebSocket.instances[0].url).toBe("ws://acme.com/ws");
+
+    unmount();
   });
 
   it("should not retain an unbounded raw message history", async () => {
@@ -155,16 +222,12 @@ describe("useWebSocket", () => {
   });
 
   it("should handle connection errors gracefully", async () => {
-    // Create a mock that will simulate an error
-    const errorLink = ws.link("ws://error-test.com/ws");
-    mswServer.use(
-      errorLink.addEventListener("connection", ({ client }) => {
-        // Simulate an error by closing the connection immediately
-        client.close(1006, "Connection failed");
-      }),
-    );
+    // The mock rejects the handshake with code 1006.
+    MockWebSocket.failWithCode = 1006;
 
-    const { result } = renderHook(() => useWebSocket("ws://error-test.com/ws"));
+    const { result, unmount } = renderHook(() =>
+      useWebSocket("ws://error-test.com/ws"),
+    );
 
     // Initially should not be connected and no error
     expect(result.current.isConnected).toBe(false);
@@ -188,9 +251,11 @@ describe("useWebSocket", () => {
 
     // Should not crash the application
     expect(result.current.socket).toBeTruthy();
+
+    unmount();
   });
 
-  it.skip("should close the WebSocket connection on unmount", async () => {
+  it("should close the WebSocket connection on unmount", async () => {
     const { result, unmount } = renderHook(() =>
       useWebSocket("ws://acme.com/ws"),
     );
@@ -204,13 +269,15 @@ describe("useWebSocket", () => {
     expect(result.current.isConnected).toBe(true);
     expect(result.current.socket).toBeTruthy();
 
-    const closeSpy = vi.spyOn(result.current.socket!, "close");
+    const socket = MockWebSocket.instances[0];
+    const closeSpy = vi.spyOn(socket, "close");
 
     // Unmount the component (this should trigger the useEffect cleanup)
     unmount();
 
     // Verify that WebSocket close was called during cleanup
     expect(closeSpy).toHaveBeenCalledOnce();
+    expect(socket.readyState).toBe(MockWebSocket.CLOSED);
   });
 
   it("should support query parameters in WebSocket URL", async () => {
@@ -362,12 +429,11 @@ describe("useWebSocket", () => {
     }
   });
 
-  // Skipped: flaky in CI - see comment at top of file
-  it.skip("should call onOpen handler when WebSocket connection opens", async () => {
+  it("should call onOpen handler when WebSocket connection opens", async () => {
     const onOpenSpy = vi.fn();
     const options = { onOpen: onOpenSpy };
 
-    const { result } = renderHook(() =>
+    const { result, unmount } = renderHook(() =>
       useWebSocket("ws://acme.com/ws", options),
     );
 
@@ -380,6 +446,8 @@ describe("useWebSocket", () => {
 
     // onOpen handler should have been called
     expect(onOpenSpy).toHaveBeenCalledOnce();
+
+    unmount();
   });
 
   it("should call onClose handler when WebSocket connection closes", async () => {
@@ -445,58 +513,47 @@ describe("useWebSocket", () => {
     }
   });
 
-  it.skip("should call onMessage handler when WebSocket receives a message", async () => {
+  it("should call onMessage handler when WebSocket receives a message", async () => {
     const onMessageSpy = vi.fn();
     const options = { onMessage: onMessageSpy };
 
-    const { result } = renderHook(() =>
+    const { result, unmount } = renderHook(() =>
       useWebSocket("ws://acme.com/ws", options),
     );
 
     // Wait for connection to be established
-    await waitFor(() => {
-      expect(result.current.isConnected).toBe(true);
+    await waitForConnection(result);
+
+    // The mock server pushes frames to the client.
+    act(() => {
+      MockWebSocket.instances[0].emitMessage("Hello from server!");
+      MockWebSocket.instances[0].emitMessage("And another one");
     });
 
-    // onMessage handler should have been called for the welcome message
-    await waitFor(() => {
-      expect(onMessageSpy).toHaveBeenCalledOnce();
-    });
-
-    // Send another message from the mock server
-    wsLink.broadcast("Hello from server!");
-
-    // onMessage handler should have been called twice now
+    // onMessage handler should have been called for both frames
     await waitFor(() => {
       expect(onMessageSpy).toHaveBeenCalledTimes(2);
     });
+    expect(onMessageSpy.mock.calls[0][0].data).toBe("Hello from server!");
+    expect(onMessageSpy.mock.calls[1][0].data).toBe("And another one");
+
+    unmount();
   });
 
   it("should call onError handler when WebSocket encounters an error", async () => {
+    // The mock rejects the handshake with code 1006.
+    MockWebSocket.failWithCode = 1006;
+
     const onErrorSpy = vi.fn();
     const options = { onError: onErrorSpy };
 
-    // Create a mock that will simulate an error
-    const errorLink = ws.link("ws://error-test.com/ws");
-    mswServer.use(
-      errorLink.addEventListener("connection", ({ client }) => {
-        // Simulate an error by closing the connection immediately
-        client.close(1006, "Connection failed");
-      }),
-    );
-
-    const { result } = renderHook(() =>
+    const { result, unmount } = renderHook(() =>
       useWebSocket("ws://error-test.com/ws", options),
     );
 
     // Initially should not be connected and no error
     expect(result.current.isConnected).toBe(false);
     expect(onErrorSpy).not.toHaveBeenCalled();
-
-    // Wait for the connection to fail
-    await waitFor(() => {
-      expect(result.current.isConnected).toBe(false);
-    });
 
     // Should have error information
     await waitFor(() => {
@@ -505,29 +562,36 @@ describe("useWebSocket", () => {
 
     // onError handler should have been called
     expect(onErrorSpy).toHaveBeenCalled();
+
+    unmount();
   });
 
-  it.skip("should provide sendMessage function to send messages to WebSocket", async () => {
-    const { result } = renderHook(() => useWebSocket("ws://acme.com/ws"));
+  it("should provide sendMessage function to send messages to WebSocket", async () => {
+    const { result, unmount } = renderHook(() =>
+      useWebSocket("ws://acme.com/ws"),
+    );
 
     // Wait for connection to be established
-    await waitFor(() => {
-      expect(result.current.isConnected).toBe(true);
-    });
+    await waitForConnection(result);
 
     // Should have a sendMessage function
     expect(result.current.sendMessage).toBeDefined();
     expect(typeof result.current.sendMessage).toBe("function");
 
-    // Mock the WebSocket send method
-    const sendSpy = vi.spyOn(result.current.socket!, "send");
+    // Spy on the underlying socket's send method
+    const socket = MockWebSocket.instances[0];
+    const sendSpy = vi.spyOn(socket, "send");
 
     // Send a message
-    result.current.sendMessage("Hello WebSocket!");
+    act(() => {
+      result.current.sendMessage("Hello WebSocket!");
+    });
 
     // Verify that WebSocket.send was called with the correct message
     expect(sendSpy).toHaveBeenCalledOnce();
     expect(sendSpy).toHaveBeenCalledWith("Hello WebSocket!");
+
+    unmount();
   });
 
   it("closes a handshake stuck in CONNECTING at the timeout and retries", async () => {

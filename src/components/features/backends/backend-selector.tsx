@@ -26,9 +26,7 @@ import {
 import { NavigationLink } from "#/components/shared/navigation-link";
 import { StyledTooltip } from "#/components/shared/buttons/styled-tooltip";
 import { useConversationStore } from "#/stores/conversation-store";
-import { AddBackendModal } from "./add-backend-modal";
 import { BackendStatusDot } from "./backend-status-dot";
-import { ManageBackendsModal } from "./manage-backends-modal";
 import { cn } from "#/utils/utils";
 import { formControlTransitionClassName } from "#/utils/form-control-classes";
 import {
@@ -36,6 +34,18 @@ import {
   dropdownMenuListClassName,
   dropdownMenuRowIconWrapperClassName,
 } from "#/utils/dropdown-classes";
+
+// Both modals are interaction-only overlays; import them lazily so they stay
+// out of the eagerly-mounted sidebar/backend-selector graph (the sidebar
+// lazy-loads the same modules, so a static import here would defeat the split).
+const AddBackendModal = React.lazy(() =>
+  import("./add-backend-modal").then((m) => ({ default: m.AddBackendModal })),
+);
+const ManageBackendsModal = React.lazy(() =>
+  import("./manage-backends-modal").then((m) => ({
+    default: m.ManageBackendsModal,
+  })),
+);
 
 const VALUE_SEPARATOR = "::";
 
@@ -457,12 +467,16 @@ export function BackendSelector({
         ) : null}
       </div>
       {addBackendModalOpen ? (
-        <AddBackendModal onClose={() => setAddBackendModalOpen(false)} />
+        <React.Suspense fallback={null}>
+          <AddBackendModal onClose={() => setAddBackendModalOpen(false)} />
+        </React.Suspense>
       ) : null}
       {manageBackendsModalOpen ? (
-        <ManageBackendsModal
-          onClose={() => setManageBackendsModalOpen(false)}
-        />
+        <React.Suspense fallback={null}>
+          <ManageBackendsModal
+            onClose={() => setManageBackendsModalOpen(false)}
+          />
+        </React.Suspense>
       ) : null}
     </>
   );

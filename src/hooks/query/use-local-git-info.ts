@@ -131,9 +131,8 @@ export const useLocalGitInfo = () => {
   const runCommandRef = useRef(runCommand);
   runCommandRef.current = runCommand;
 
-  // runCommandRef is a ref (always stable); the linter cannot infer this so
-  // we disable the exhaustive-deps check here.
-  // eslint-disable-next-line @tanstack/query/exhaustive-deps
+  // runCommandRef is a ref (always stable), so it deliberately stays out of
+  // the queryKey even though queryFn reads it.
   return useQuery<LocalGitInfo>({
     queryKey: [
       "local-git-info",

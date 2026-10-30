@@ -33,6 +33,10 @@ import {
   toSkillEnablement,
   type SkillEnablement,
 } from "#/utils/skill-enablement";
+import AgentProfilesService from "./agent-profiles-service/agent-profiles-service.api";
+import HooksService from "./hooks-service";
+import ProfilesService from "./profiles-service/profiles-service.api";
+import { SecretsService } from "./secrets-service";
 import SettingsService from "./settings-service/settings-service.api";
 import { getStoredConversationMetadata } from "./conversation-metadata-store";
 import LLMSubscriptionService from "./llm-subscription-service";
@@ -1458,8 +1462,6 @@ async function resolveLlmProfileSettings(
   profileName: string,
 ): Promise<SettingsRecord | null> {
   try {
-    const { default: ProfilesService } =
-      await import("./profiles-service/profiles-service.api");
     // ``encrypted`` matches ``secrets_encrypted`` on the payload: the
     // agent-server decrypts with the same cipher it encrypted with.
     const detail = await ProfilesService.getProfile(profileName, "encrypted");
@@ -1485,9 +1487,6 @@ async function resolveAgentProfileLlmSettings(
   agentProfileId: string,
 ): Promise<SettingsRecord | null> {
   try {
-    const { default: AgentProfilesService } =
-      await import("./agent-profiles-service/agent-profiles-service.api");
-
     const { profiles } = await AgentProfilesService.listProfiles();
     const summary = profiles.find(
       (profile) => profile.id === agentProfileId && profile.llm_profile_ref,
@@ -1524,8 +1523,6 @@ export async function buildStartPlanningConversationRequestWithEncryptedSettings
   parentAgentProfileId?: string | null;
   initialMessage?: string;
 }): Promise<RawAgentStartConversationPayload> {
-  const { SecretsService } = await import("./secrets-service");
-
   const [settingsResult, customSecrets] = await Promise.all([
     SettingsService.getSettingsForConversation(),
     SecretsService.getSecrets(),
@@ -1596,11 +1593,6 @@ export async function buildStartConversationRequestWithEncryptedSettings(options
   agentProfileKind?: AgentKind;
   titleLlmProfile?: string;
 }): Promise<Record<string, unknown>> {
-  const [{ SecretsService }, { default: HooksService }] = await Promise.all([
-    import("./secrets-service"),
-    import("./hooks-service"),
-  ]);
-
   const [
     settingsResult,
     customSecrets,

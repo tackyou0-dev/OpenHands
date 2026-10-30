@@ -18,26 +18,53 @@ vi.mock("#/contexts/conversation-websocket-context", () => ({
   useConversationWebSocket: () => null,
 }));
 
+// Terminal is read-only - no longer tests user input functionality.
+// `vi.hoisted`/`vi.mock` run before the module graph is loaded, so they live at
+// the top level of the file rather than inside `describe`/`beforeAll`.
+const mockTerminal = vi.hoisted(() => ({
+  loadAddon: vi.fn(),
+  open: vi.fn(),
+  write: vi.fn(),
+  writeln: vi.fn(),
+  dispose: vi.fn(),
+  element: document.createElement("div"),
+}));
+
+const mockFitAddon = vi.hoisted(() => ({
+  fit: vi.fn(),
+}));
+
+// mock Terminal - use class for Vitest 4 constructor support
+vi.mock("@xterm/xterm", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@xterm/xterm")>()),
+  Terminal: class {
+    loadAddon = mockTerminal.loadAddon;
+
+    open = mockTerminal.open;
+
+    write = mockTerminal.write;
+
+    writeln = mockTerminal.writeln;
+
+    dispose = mockTerminal.dispose;
+
+    element = mockTerminal.element;
+  },
+}));
+
+// mock FitAddon
+vi.mock("@xterm/addon-fit", () => ({
+  FitAddon: class {
+    fit = mockFitAddon.fit;
+  },
+}));
+
 function TestTerminalComponent() {
   const ref = useTerminal();
   return <div ref={ref} />;
 }
 
 describe("useTerminal", () => {
-  // Terminal is read-only - no longer tests user input functionality
-  const mockTerminal = vi.hoisted(() => ({
-    loadAddon: vi.fn(),
-    open: vi.fn(),
-    write: vi.fn(),
-    writeln: vi.fn(),
-    dispose: vi.fn(),
-    element: document.createElement("div"),
-  }));
-
-  const mockFitAddon = vi.hoisted(() => ({
-    fit: vi.fn(),
-  }));
-
   beforeAll(() => {
     // mock ResizeObserver - use class for Vitest 4 constructor support
     window.ResizeObserver = class {
@@ -47,31 +74,6 @@ describe("useTerminal", () => {
 
       disconnect = vi.fn();
     } as unknown as typeof ResizeObserver;
-
-    // mock Terminal - use class for Vitest 4 constructor support
-    vi.mock("@xterm/xterm", async (importOriginal) => ({
-      ...(await importOriginal<typeof import("@xterm/xterm")>()),
-      Terminal: class {
-        loadAddon = mockTerminal.loadAddon;
-
-        open = mockTerminal.open;
-
-        write = mockTerminal.write;
-
-        writeln = mockTerminal.writeln;
-
-        dispose = mockTerminal.dispose;
-
-        element = mockTerminal.element;
-      },
-    }));
-
-    // mock FitAddon
-    vi.mock("@xterm/addon-fit", () => ({
-      FitAddon: class {
-        fit = mockFitAddon.fit;
-      },
-    }));
   });
 
   afterEach(() => {
